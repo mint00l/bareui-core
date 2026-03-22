@@ -46,6 +46,7 @@ export type ContentPart = PartBase & {
     start: Comment;
     end: Comment;
     cleanups: Array<() => void>;
+    textNode: Text | null;
 };
 
 /**

@@ -233,6 +233,7 @@ function createRuntimeParts(definitions: CompiledPart[], fragment: DocumentFragm
                 start: target,
                 end,
                 cleanups: [],
+                textNode: null,
                 last: INIT,
             } as ContentPart);
 
@@ -279,6 +280,13 @@ function clearBetween(start: Comment, end: Comment): void {
         node.parentNode?.removeChild(node);
         node = next;
     }
+}
+
+/**
+ * Returns true when a value can be rendered as a single text node.
+ */
+function isPrimitiveTextValue(value: unknown): value is string | number | bigint {
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint';
 }
 
 /**
@@ -593,7 +601,29 @@ export function html(
 
                 runCallbacks(part.cleanups);
                 part.cleanups.length = 0;
+
+                if (resolved === null || resolved === undefined || resolved === false) {
+                    clearBetween(part.start, part.end);
+                    part.textNode = null;
+                    continue;
+                }
+
+                if (isPrimitiveTextValue(resolved)) {
+                    const text = String(resolved);
+
+                    if (part.textNode && part.textNode.parentNode) {
+                        part.textNode.data = text;
+                    } else {
+                        clearBetween(part.start, part.end);
+                        part.textNode = document.createTextNode(text);
+                        part.end.parentNode!.insertBefore(part.textNode, part.end);
+                    }
+
+                    continue;
+                }
+
                 clearBetween(part.start, part.end);
+                part.textNode = null;
 
                 const temp = document.createDocumentFragment();
                 appendRenderable(temp, resolved as Renderable, part.cleanups);
