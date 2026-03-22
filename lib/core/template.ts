@@ -283,6 +283,17 @@ function clearBetween(start: Comment, end: Comment): void {
 }
 
 /**
+ * Removes a list of nodes from the DOM if they are still attached.
+ */
+function removeNodes(nodes: Node[]): void {
+    for (const node of nodes) {
+        if (node.parentNode) {
+            node.parentNode.removeChild(node);
+        }
+    }
+}
+
+/**
  * Returns true when a value can be rendered as a single text node.
  */
 function isPrimitiveTextValue(value: unknown): value is string | number | bigint {
@@ -737,16 +748,26 @@ export function repeat<T>(
             orderedNodes.push(...entry.nodes);
         }
 
+        /**
+         * Remove entries that are no longer present, disposing their child templates
+         * and detaching their DOM nodes from the list region.
+         */
         for (const [key, entry] of entries.entries()) {
             if (!nextKeys.has(key)) {
+                removeNodes(entry.nodes);
                 entry.child.dispose();
                 entries.delete(key);
             }
         }
 
-        clearBetween(start, end);
-
+        /**
+         * Move the current ordered nodes into a fragment and insert them before the
+         * end marker. Appending existing nodes to a fragment automatically detaches
+         * them from their previous position, which preserves node identity while
+         * reordering.
+         */
         const temp = document.createDocumentFragment();
+
         for (const node of orderedNodes) {
             temp.appendChild(node);
         }
