@@ -15,6 +15,25 @@ const effectStack: EffectRunner[] = [];
 const effectOwnerStack: EffectOwner[] = [];
 
 /**
+ * Queue of effects scheduled to run in the next microtask flush.
+ * A Set is used so the same effect can be triggered many times in one tick
+ * without being executed more than once.
+ */
+const pendingEffects = new Set<EffectRunner>();
+
+/**
+ * True while a microtask has already been scheduled for pending effects.
+ */
+let flushScheduled = false;
+
+/**
+ * True while the effect queue is actively being flushed.
+ * This prevents nested flushes from overlapping and keeps the scheduler stable
+ * when effects trigger other effects while running.
+ */
+let isFlushing = false;
+
+/**
  * Removes the runner from all dependency sets it has subscribed to.
  */
 function cleanupEffect(runner: EffectRunner): void {
@@ -70,7 +89,56 @@ function track(target: object, key: PropertyKey): void {
 }
 
 /**
+ * Adds an effect runner to the pending queue and ensures a microtask flush is
+ * scheduled.
+ *
+ * The same runner can be triggered many times in a single turn of the event
+ * loop, but it will only be executed once per flush because the queue is a Set.
+ */
+function queueEffect(runner: EffectRunner): void {
+    if (runner.stopped) return;
+
+    pendingEffects.add(runner);
+
+    if (flushScheduled) return;
+
+    flushScheduled = true;
+    queueMicrotask(flushEffects);
+}
+
+/**
+ * Flushes all queued effects in microtask order.
+ *
+ * If an effect causes more reactive writes while the queue is being flushed,
+ * those newly scheduled effects are also processed before the flush finishes.
+ */
+function flushEffects(): void {
+    if (isFlushing) return;
+
+    flushScheduled = false;
+    isFlushing = true;
+
+    try {
+        while (pendingEffects.size > 0) {
+            const effects = Array.from(pendingEffects);
+            pendingEffects.clear();
+
+            for (const runner of effects) {
+                if (!runner.stopped) {
+                    runner();
+                }
+            }
+        }
+    } finally {
+        isFlushing = false;
+    }
+}
+
+/**
  * Triggers every effect subscribed to target[key].
+ *
+ * Instead of running effects immediately, they are queued and flushed once in
+ * a microtask. This batches multiple writes into a single update pass.
  */
 function trigger(target: object, key: PropertyKey): void {
     const depsMap = subs.get(target);
@@ -81,7 +149,9 @@ function trigger(target: object, key: PropertyKey): void {
 
     // Snapshot first so effects can mutate their own dependencies safely.
     const effects = new Set(dep);
-    effects.forEach(runner => runner());
+    effects.forEach(runner => {
+        queueEffect(runner);
+    });
 }
 
 /**
@@ -179,6 +249,7 @@ export function effect(fn: () => unknown): EffectRunner {
 
         runner.stopped = true;
         cleanupEffect(runner);
+        pendingEffects.delete(runner);
 
         if (runner.owner) {
             runner.owner.effects.delete(runner);
